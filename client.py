@@ -11,6 +11,7 @@ UDP_IP = "127.0.0.1"
 UDP_PORT = 5005 # for testing without channel
 #UDP_PORT = 5007 # for testing with channel
 MSS = 12 # maximum segment size
+lost_messages = 0
 
 sock = socket.socket(socket.AF_INET,    # Internet
                      socket.SOCK_DGRAM) # UDP
@@ -81,8 +82,8 @@ class Client:
   def send_reliable_message(self, message):
     # header could reuse seq so far, or just start back at 0 for sending message as this does
     # but need to keep track of the sequence number when doing 
-    msg_header = utils.Header(0, 0, syn = 0, ack = 0, fin = 0)
-    send_udp(msg_header.bits() + message.encode())
+    # msg_header = utils.Header(0, 0, syn = 0, ack = 0, fin = 0)
+    # send_udp(msg_header.bits() + message.encode())
     
     
     # handle mss to send in pieces
@@ -92,6 +93,51 @@ class Client:
     # handle seq / ack appropriately
     # handle stop and wait: resend if lost, detected by no ack in time
     # recommend handling this via a recv and waiting until socket.timeout exception occurs, then resending
+
+    def chunkstring(string, length):
+      return (string[0+i:length+i] for i in range(0, len(string), length))
+
+    MMS = 12 # maximum message size
+    timeout_value = 1 # seconds
+    lost_messages = 0
+    sock.settimeout(timeout_value)
+    chunks = list(chunkstring(message, MMS))
+    chunks.append('') # add empty string to end of list to indicate end of message
+    for i in chunks:
+      msg_header = utils.Header(self.next_seq_num, self.last_received_seq_num + 1, syn = 0, ack = 0, fin = 0)
+      send_udp(msg_header.bits() + i.encode())
+      self.next_seq_num += 1
+      while True:
+        try:
+          recv_data, addr = sock.recvfrom(1024)
+          ack_header = utils.bits_to_header(recv_data)
+          self.last_received_seq_num = ack_header.seq_num
+          if ack_header.ack == 1:
+            break
+        except socket.timeout:
+          if utils.DEBUG:
+            print('timeout')
+          # Resend a lost packet, timeout value reached
+          msg_header = utils.Header(self.next_seq_num, self.last_received_seq_num, syn = 0, ack = 0, fin = 0)
+          send_udp(msg_header.bits() + i.encode())
+          self.next_seq_num += 1
+          lost_messages += 1
+          continue
+    #print('lost messages: ', lost_messages)
+    
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 if __name__ == "__main__":
   client = Client()
